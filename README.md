@@ -15,7 +15,7 @@
 - 生成 `hysteria2` 和 `reality` 节点配置
 - 自动下载配置证书到 `/opt/cert`
 - 生成 Sing-box 配置文件 `/etc/sing-box/config.json`
-- 生成客户端订阅文件 `~/link.yml`
+- 生成客户端配置文件 `~/link.yml`
 - 自动启用并启动 `sing-box` 服务（`systemd` 或 `OpenRC`）
 
 ### `sing-box-pkg.sh`
