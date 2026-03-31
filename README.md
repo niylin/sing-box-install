@@ -28,7 +28,8 @@
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/niylin/sing-box-install/main/sing-box-pkg.sh | bash
-
+```
+```bash
 wget -qO- https://link.wdqgn.eu.org/nopasswd/sing-box-pkg.sh | bash
 ```
 
@@ -40,7 +41,8 @@ wget -qO- https://link.wdqgn.eu.org/nopasswd/sing-box-pkg.sh | bash
 ###  一键安装sing-box和生成节点
 ```bash
 wget -qO- https://raw.githubusercontent.com/niylin/sing-box-install/main/sing-box-install.sh | bash
-
+```
+```bash
 wget -qO- https://link.wdqgn.eu.org/nopasswd/sing-box-install.sh | bash
 ```
 
