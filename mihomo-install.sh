@@ -149,57 +149,51 @@ rules:
 EOF
 
 cat > ~/link.yaml <<EOF
-  - name: ${HY_proxy_name} |${current_time}
-    type: hysteria2
-    server: $ip_address
-    port: $hysteria_port
-    password: $uuid
-    sni: $Certificate_name
-    alpn:
-      - h3
-  
-  - name: ${RE_proxy_name} |${current_time}
-    type: vless
-    server: $ip_address
-    port: $reality_port
-    uuid: $uuid
-    network: tcp
-    tls: true
-    udp: true
-    flow: xtls-rprx-vision
-    servername: www.tencentcloud.com
-    reality-opts:
-      public-key: $public_key
-      short-id: $shortId
-    client-fingerprint: chrome
-
-  - name: ${AN_proxy_name} |${current_time}
-    type: anytls
-    server: $ip_address
-    port: $anytls_port
-    password: $uuid
-    client-fingerprint: chrome
-    udp: true
-    idle-session-check-interval: 30
-    idle-session-timeout: 30
-    min-idle-session: 0
-    sni: $Certificate_name
-    alpn:
-      - h2
-      - http/1.1
-    skip-cert-verify: true
+----------------------------------------------------------------
+- name: ${HY_proxy_name} |${current_time}
+  type: hysteria2
+  server: $ip_address
+  port: $hysteria_port
+  password: $uuid
+  sni: $Certificate_name
+  alpn:
+    - h3
+- name: ${RE_proxy_name} |${current_time}
+  type: vless
+  server: $ip_address
+  port: $reality_port
+  uuid: $uuid
+  network: tcp
+  tls: true
+  udp: true
+  flow: xtls-rprx-vision
+  servername: www.tencentcloud.com
+  reality-opts:
+    public-key: $public_key
+    short-id: $shortId
+  client-fingerprint: chrome
+- name: ${AN_proxy_name} |${current_time}
+  type: anytls
+  server: $ip_address
+  port: $anytls_port
+  password: $uuid
+  client-fingerprint: chrome
+  udp: true
+  idle-session-check-interval: 30
+  idle-session-timeout: 30
+  min-idle-session: 0
+  sni: $Certificate_name
+  alpn:
+    - h2
+    - http/1.1
+  skip-cert-verify: true
+-----------------------------------------------------------------
+- {name: "${HY_proxy_name} |${current_time}", type: hysteria2, server: $ip_address, port: $hysteria_port, password: $uuid, sni: $Certificate_name, alpn: [h3]}
+- {name: "${RE_proxy_name} |${current_time}", type: vless, server: $ip_address, port: $reality_port, uuid: $uuid, network: tcp, tls: true, udp: true, flow: xtls-rprx-vision, servername: www.tencentcloud.com, reality-opts: {public-key: $public_key, short-id: $shortId}, client-fingerprint: chrome}
+- {name: "${AN_proxy_name} |${current_time}", type: anytls, server: $ip_address, port: $anytls_port, password: $uuid, client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: $Certificate_name, alpn: [h2, http/1.1], skip-cert-verify: true}
 EOF
 
 cat ~/link.yaml
-
-if command -v systemctl &>/dev/null; then
-    systemctl daemon-reload
-    systemctl enable --now mihomo
-    systemctl status mihomo --no-pager
-else
-    rc-update add mihomo default
-    rc-service mihomo start
-fi
 
 if command -v crontab &>/dev/null; then
 (crontab -l 2>/dev/null; \
@@ -207,4 +201,15 @@ echo "0 0 * * 0 wget -N -O /etc/mihomo/cert/$Certificate_name.crt https://link.w
 echo "0 0 * * 0 wget -N -O /etc/mihomo/cert/$Certificate_name.key https://link.wdqgn.eu.org/nopasswd/$Certificate_name.key") | crontab -
 else
     echo "未检测到 crontab，请手动设置定时任务更新证书"
+    echo "wget -N -O /etc/mihomo/cert/$Certificate_name.crt https://link.wdqgn.eu.org/nopasswd/$Certificate_name.crt"
+    echo "wget -N -O /etc/mihomo/cert/$Certificate_name.key https://link.wdqgn.eu.org/nopasswd/$Certificate_name.key"
+fi
+
+if command -v systemctl &>/dev/null; then
+    systemctl daemon-reload
+    systemctl enable --now mihomo
+    systemctl status mihomo --no-pager
+else
+    rc-update add mihomo default
+    rc-service mihomo restart
 fi
