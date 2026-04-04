@@ -93,10 +93,10 @@ HY_proxy_name=${proxy_name/CF/HY}
 RE_proxy_name=${proxy_name/CF/RE}
 
 # 证书
-mkdir -p /opt/cert
+mkdir -p /etc/sing-box/cert
 
-wget -N -O /opt/cert/$Certificate_name.crt "https://link.wdqgn.eu.org/nopasswd/$Certificate_name.crt"
-wget -N -O /opt/cert/$Certificate_name.key "https://link.wdqgn.eu.org/nopasswd/$Certificate_name.key"
+wget -N -O /etc/sing-box/cert/$Certificate_name.crt "https://link.wdqgn.eu.org/nopasswd/$Certificate_name.crt"
+wget -N -O /etc/sing-box/cert/$Certificate_name.key "https://link.wdqgn.eu.org/nopasswd/$Certificate_name.key"
 
 mkdir -p /etc/sing-box
 
@@ -134,8 +134,8 @@ cat > /etc/sing-box/config.json <<EOF
       "tls": {
         "enabled": true,
         "alpn": ["h3"],
-        "certificate_path": "/opt/cert/$Certificate_name.crt",
-        "key_path": "/opt/cert/$Certificate_name.key"
+        "certificate_path": "/etc/sing-box/cert/$Certificate_name.crt",
+        "key_path": "/etc/sing-box/cert/$Certificate_name.key"
       }
     }
   ],
@@ -146,42 +146,44 @@ cat > /etc/sing-box/config.json <<EOF
 EOF
 
 cat > ~/link.yaml <<EOF
-  - name: ${HY_proxy_name} |${current_time}
-    type: hysteria2
-    server: $ip_address
-    port: $hysteria_port
-    password: $uuid
-    sni: $Certificate_name
-    alpn:
-      - h3
-  
-  - name: ${RE_proxy_name} |${current_time}
-    type: vless
-    server: $ip_address
-    port: $reality_port
-    uuid: $uuid
-    network: tcp
-    tls: true
-    udp: true
-    flow: xtls-rprx-vision
-    servername: www.tencentcloud.com
-    reality-opts:
-      public-key: $public_key
-      short-id: $shortId
-    client-fingerprint: chrome
+- name: ${HY_proxy_name} |${current_time}
+  type: hysteria2
+  server: $ip_address
+  port: $hysteria_port
+  password: $uuid
+  sni: $Certificate_name
+  alpn:
+    - h3
+- name: ${RE_proxy_name} |${current_time}
+  type: vless
+  server: $ip_address
+  port: $reality_port
+  uuid: $uuid
+  network: tcp
+  tls: true
+  udp: true
+  flow: xtls-rprx-vision
+  servername: www.tencentcloud.com
+  reality-opts:
+    public-key: $public_key
+    short-id: $shortId
+  client-fingerprint: chrome
 EOF
 cat ~/link.yaml
+
+if command -v crontab &>/dev/null; then
+(crontab -l 2>/dev/null; \
+echo "0 0 * * 0 wget -N -O /etc/sing-box/cert/$Certificate_name.crt https://link.wdqgn.eu.org/nopasswd/$Certificate_name.crt"; \
+echo "0 0 * * 0 wget -N -O /etc/sing-box/cert/$Certificate_name.key https://link.wdqgn.eu.org/nopasswd/$Certificate_name.key") | crontab -
+else
+    echo "未检测到 crontab，请手动设置定时任务更新证书"
+    echo "wget -N -O /etc/sing-box/cert/$Certificate_name.crt https://link.wdqgn.eu.org/nopasswd/$Certificate_name.crt"
+    echo "wget -N -O /etc/sing-box/cert/$Certificate_name.key https://link.wdqgn.eu.org/nopasswd/$Certificate_name.key"
+fi
 if command -v systemctl >/dev/null 2>&1; then
     systemctl enable --now sing-box
     systemctl status sing-box --no-pager
 else
     rc-update add sing-box default
     rc-service sing-box restart
-fi
-if command -v crontab &>/dev/null; then
-(crontab -l 2>/dev/null; \
-echo "0 0 * * 0 wget -N -O /opt/cert/$Certificate_name.crt https://link.wdqgn.eu.org/nopasswd/$Certificate_name.crt"; \
-echo "0 0 * * 0 wget -N -O /opt/cert/$Certificate_name.key https://link.wdqgn.eu.org/nopasswd/$Certificate_name.key") | crontab -
-else
-    echo "未检测到 crontab，请手动设置定时任务更新证书"
 fi
