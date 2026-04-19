@@ -1,6 +1,6 @@
 # MNC 安装脚本
 
-一套基于 sing-box、mihomo (Clash) 和 cloudflared 的一键安装脚本，旨在快速部署多种代理协议。
+一套基于 sing-box、mihomo 和 cloudflared 的一键安装脚本，旨在快速部署多种代理协议。
 
 ## 主要脚本说明
 
