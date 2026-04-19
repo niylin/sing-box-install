@@ -326,8 +326,8 @@ proxy-groups:
 - name: "DIRECT-OUT"
   type: select
   proxies:
-    #- warp-masque
     - DIRECT
+    #- warp-masque
 rules:
 - MATCH,DIRECT-OUT
 EOF
@@ -452,17 +452,6 @@ wget -N -O /opt/www/config.yaml https://link.wdqgn.eu.org/nopasswd/config.yaml
 subscription_address=https://${Certificate_name}/$uuid/${current_time}.yaml
 sed -i "s#my-subscription-address#$(printf '%s' "$subscription_address" | sed 's/[\/&]/\\&/g')#g" /opt/www/config.yaml
 sed -i "s#password-config#$uuid#g" /opt/www/config.yaml
-
-
-# if [[ "$MASQUE_CONFIG_STATUS" = "success" ]]; then
-# cat >> "$CONFIG_FILE" <<EOF
-
-# proxies:
-# $masque_response
-# EOF
-# sed -Ei 's/^([[:space:]]*)#(- warp-masque)$/\1\2/' "$CONFIG_FILE"
-# echo "已更新 $CONFIG_FILE，已启用 warp-masque出站"
-# fi
 
 if command -v systemctl &>/dev/null; then
     systemctl daemon-reload
