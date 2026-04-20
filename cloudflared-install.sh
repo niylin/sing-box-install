@@ -93,7 +93,7 @@ proxies:
 - {name: "$proxy_name", type: vless, server: cf.wdqgn.eu.org, port: 443, uuid: $uuid, network: ws, tls: true, ech-opts: {enable: true}, flow: xtls-rprx-vision, alpn: ["h2","http/1.1"], ws-opts: {path: /$uuid-vl, headers: {host: $domain_name}}, encryption: $client_encryption}
 EOF
 
-wget -N -O /opt/www/config.yaml https://link.wdqgn.eu.org/nopasswd/config.yaml
+wget -O /opt/www/config.yaml https://link.wdqgn.eu.org/nopasswd/config.yaml
 subscription_address=https://${domain_name_api}/${current_time}.yaml
 sed -i "s#my-subscription-address#$(printf '%s' "$subscription_address" | sed 's/[\/&]/\\&/g')#g" /opt/www/config.yaml
 sed -i "s#password-config#$uuid#g" /opt/www/config.yaml

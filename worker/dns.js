@@ -5,6 +5,7 @@ addEventListener('fetch', event => {
 async function handleRequest(request) {
   const url = new URL(request.url)
 
+  // 只处理 /create_dns 路径
   if (url.pathname !== '/' + CREATE_PATH) {
     return new Response('Not Found', { status: 404 })
   }
@@ -20,7 +21,7 @@ async function handleRequest(request) {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 })
   }
 
-  const { domain, ip } = data
+  const { domain, ip, enable_cdn } = data
   if (!domain || !ip) {
     return new Response(JSON.stringify({ error: 'domain 和 ip 必填' }), { status: 400 })
   }
@@ -35,11 +36,11 @@ async function handleRequest(request) {
     name: domain,
     content: ip,
     ttl: 120,
-    proxied: true
+    proxied: enable_cdn
   }
 
   const urlApi = `https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records`
-  
+
   try {
     const resp = await fetch(urlApi, {
       method: 'POST',

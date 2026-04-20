@@ -218,17 +218,17 @@ if [ "$cert_choice" = "y" ]; then
     done
     
     echo "正在下载证书文件..."
-    wget -N -O /etc/mihomo/cert/$CERT_NAME.crt "https://link.wdqgn.eu.org/nopasswd/cert/$CERT_NAME.crt"
-    wget -N -O /etc/mihomo/cert/$CERT_NAME.key "https://link.wdqgn.eu.org/nopasswd/cert/$CERT_NAME.key"
+    wget -O /etc/mihomo/cert/$CERT_NAME.crt "https://link.wdqgn.eu.org/nopasswd/cert/$CERT_NAME.crt"
+    wget -O /etc/mihomo/cert/$CERT_NAME.key "https://link.wdqgn.eu.org/nopasswd/cert/$CERT_NAME.key"
     
     if command -v crontab &>/dev/null; then
         (crontab -l 2>/dev/null; \
-        echo "0 0 * * 0 wget -N -O /etc/mihomo/cert/$CERT_NAME.crt https://link.wdqgn.eu.org/nopasswd/cert/$CERT_NAME.crt"; \
-        echo "0 0 * * 0 wget -N -O /etc/mihomo/cert/$CERT_NAME.key https://link.wdqgn.eu.org/nopasswd/cert/$CERT_NAME.key") | crontab -
+        echo "0 0 * * 0 wget -O /etc/mihomo/cert/$CERT_NAME.crt https://link.wdqgn.eu.org/nopasswd/cert/$CERT_NAME.crt"; \
+        echo "0 0 * * 0 wget -O /etc/mihomo/cert/$CERT_NAME.key https://link.wdqgn.eu.org/nopasswd/cert/$CERT_NAME.key") | crontab -
     else
         echo "未检测到 crontab，请手动设置定时任务更新证书"
-        echo "wget -N -O /etc/mihomo/cert/$CERT_NAME.crt https://link.wdqgn.eu.org/nopasswd/cert/$CERT_NAME.crt"
-        echo "wget -N -O /etc/mihomo/cert/$CERT_NAME.key https://link.wdqgn.eu.org/nopasswd/cert/$CERT_NAME.key"
+        echo "wget -O /etc/mihomo/cert/$CERT_NAME.crt https://link.wdqgn.eu.org/nopasswd/cert/$CERT_NAME.crt"
+        echo "wget -O /etc/mihomo/cert/$CERT_NAME.key https://link.wdqgn.eu.org/nopasswd/cert/$CERT_NAME.key"
     fi
 fi
 
@@ -456,7 +456,7 @@ proxies:
 - {name: "${proxy_name} |${current_time}", type: vless, server: $VLESS_SERVER, port: $select_port, uuid: $uuid, network: ws, tls: true, $ECH_OPTS flow: xtls-rprx-vision, alpn: ["h2","http/1.1"], ws-opts: {path: /$uuid-vl, headers: {host: $Certificate_name}}, encryption: $client_encryption}
 EOF
 
-wget -N -O /opt/www/config.yaml https://link.wdqgn.eu.org/nopasswd/config.yaml
+wget -O /opt/www/config.yaml https://link.wdqgn.eu.org/nopasswd/config.yaml
 subscription_address=https://${Certificate_name}:${select_port}/$uuid/${current_time}.yaml
 sed -i "s#my-subscription-address#$(printf '%s' "$subscription_address" | sed 's/[\/&]/\\&/g')#g" /opt/www/config.yaml
 sed -i "s#password-config#$uuid#g" /opt/www/config.yaml
