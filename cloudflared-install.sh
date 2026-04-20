@@ -58,10 +58,10 @@ server_decryption=$(echo "$vless_x25519" | awk -F'"' '/\[Server\]/ {print $2}')
 client_encryption=$(echo "$vless_x25519" | awk -F'"' '/\[Client\]/ {print $2}')
 mkdir -p /etc/mihomo
 cat > /etc/mihomo/config.yaml <<EOF
-external-controller: "127.0.0.1:9090"
-external-ui: ui
-secret: "$uuid"
-external-ui-url: "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip"
+# external-controller: "127.0.0.1:9090"
+# external-ui: ui
+# secret: "$uuid"
+# external-ui-url: "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip"
 ipv6: true
 log-level: info
 mode: rule
@@ -110,15 +110,16 @@ else
     rc-service mihomo restart
 fi
 
-cat /opt/www/${current_time}.yaml
+echo "-------------------------------------------------------------------"
 echo "生成的clash配置位于 /opt/www/"
+echo "临时下载链接,关闭http服务器后失效,如需重新使用执行或作为服务运行"
+echo "python3 -m http.server 9090 --bind 127.0.0.1 --directory /opt/www/"
+echo "-------------------------------------------------------------------"
+cat /opt/www/${current_time}.yaml
 echo "clash订阅链接地址为,可直接使用 https://$domain_name_api/config.yaml"
 echo "纯节点链接,可加入其他配置的proxy-providers块 $subscription_address   "
-echo "使用订阅需先关闭mihomo端口占用,临时开启文件服务器到/opt/www/"
-echo "systemctl stop mihomo 或 rc-service mihomo stop"
-echo "python3 -m http.server 9090 --bind 127.0.0.1 --directory /opt/www/"
-echo "更新订阅后,关闭临时http服务,重新启动mihomo即可,systemctl restart mihomo 或 rc-service mihomo restart"
-echo "访问控制zashboard面板,地址为 https://$domain_name_api/ui/#/"
-echo "面板配置,协议 https 主机 $domain_name_api 端口 443 密码 $uuid"
+echo "-------------------------------------------------------------------"
 echo "非移动用户自行更换其他优选域名,cf.wdqgn.eu.org只测了移动"
 echo "如遇意外错误可加入tg群反馈 https://t.me/dmjlqa"
+
+python3 -m http.server 9090 --bind 127.0.0.1 --directory /opt/www/
