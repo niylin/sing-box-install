@@ -31,8 +31,7 @@ uninstall_all() {
     rm -f /usr/local/bin/mihomo
     rm -rf /etc/mihomo
     rm -f /etc/nginx/conf.d/subscription.conf
-    rm -f /opt/www/*.yaml
-    rmdir /opt/www 2>/dev/null || true
+    rm -f /opt/www/sub/*.yaml
 
     remove_nginx_block
 
@@ -46,39 +45,34 @@ uninstall_all() {
     echo "清理完成。"
     exit 0
 }
+stop_services() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop apache2 httpd caddy 2>/dev/null || true
+        systemctl stop apache2.socket httpd.socket caddy.socket 2>/dev/null || true
+
+        systemctl disable apache2 httpd caddy 2>/dev/null || true
+        systemctl disable apache2.socket httpd.socket caddy.socket 2>/dev/null || true
+    else
+        rc-service apache2 stop 2>/dev/null || true
+        rc-service httpd stop 2>/dev/null || true
+        rc-service caddy stop 2>/dev/null || true
+    fi
+}
 
 if [ "${1:-}" = "-uninstall" ]; then
     uninstall_all
 fi
 
-echo "脚本将安装 mihomo，并配置 hysteria,reality，anytls,vless-ws 四种协议的入站"
+echo "脚本将安装 mihomo，并配置 hysteria,tuic，anytls,vless,trusttunnel,mieru 等协议的入站"
 echo "建议在使用apt和apk包管理器的系统中运行,其他系统未经测试,包名不同可能导致安装依赖失败"
 echo "生成的客户端配置中，ip地址将配置为当前服务器的出站IP，如果出站和入站IP不同，请手动修改客户端配置文件"
-echo "大多数系统内存需求至少256mb,如配置过低请使用无nginx版本的安装脚本或更改为精简的alpine系统"
+echo "部分128MB RAM的系统,安装nginx可能会失败,可手动安装nginx以及stream模块后重新运行脚本"
 
+read -p "使用IPv6输入y,默认IPv4: " ip_type_choice < /dev/tty
+read -rp "是否要配置 Warp 节点出站? y 配置,其他跳过 " warp_choice < /dev/tty
 while true; do
-    echo "请选择使用的IP地址类型："
-    echo "[1] IPv6"
-    echo "[2] IPv4"
-
-    read -p "请输入选项数字 [1/2]: " ip_type_choice < /dev/tty
-    case "$ip_type_choice" in
-        1|2) break ;;
-        *) echo "错误：无效选项 '$ip_type_choice'，请输入 1 或 2。" ;;
-    esac
-done
-
-while true; do
-    read -rp "是否要配置 Warp 节点出站? (y/n) " warp_choice < /dev/tty
-    case "$warp_choice" in
-        y|Y) break ;;
-        n|N) break ;;
-        *) echo "错误：无效选项 '$warp_choice'，请输入 y 或 n。" ;;
-    esac
-done
-
-while true; do
-    read -p "请输入入站端口(例如 443,多协议共用,建议443,不会影响建站): " select_port < /dev/tty
+    read -p "输入主入站端口,默认443: " select_port < /dev/tty
+    select_port=${select_port:-443}
     if [[ "$select_port" =~ ^[0-9]+$ ]] && [ "$select_port" -ge 1 ] && [ "$select_port" -le 65535 ]; then
         if ss -H -ltnu "( sport = :$select_port )" | grep -q .; then
             echo "错误：端口 $select_port 已被占用，请重新输入。"
@@ -88,44 +82,41 @@ while true; do
     fi
     echo "错误：请输入有效的端口号数字 (1-65535)。"
 done
-current_time=$(TZ=UTC-8 date +"%Y%m%d-%H%M%S")
+while true; do
+    read -p "输入mieru和tuic入站端口,默认2053): " TU_SELECT_PORT < /dev/tty
+    TU_SELECT_PORT=${TU_SELECT_PORT:-2053}
+    if [[ "$TU_SELECT_PORT" =~ ^[0-9]+$ ]] && [ "$TU_SELECT_PORT" -ge 1 ] && [ "$TU_SELECT_PORT" -le 65535 ]; then
+        if ss -H -ltnu "( sport = :$TU_SELECT_PORT )" | grep -q .; then
+            echo "错误：端口 $TU_SELECT_PORT 已被占用，请重新输入。"
+            continue
+        fi
+        break
+    fi
+    echo "错误：请输入有效的端口号数字 (1-65535)。"
+done
+read -r -p "输入y使用自定义证书,其他使用默认: " cert_choice < /dev/tty
 
+current_time=$(TZ=UTC-8 date +"%Y%m%d-%H%M%S")
 mkdir -p /etc/mihomo/cert
 
-while true; do
-    echo "使用默认证书还是自定义证书？"
-    echo "y 默认证书"
-    echo "n 自定义证书"
-
-    read -r -p "请输入选项 [y/n]: " cert_choice < /dev/tty
-
-    case "$cert_choice" in
-        y)
-            Certificate_name="${current_time}.nnn.uw.to"
-            CERT_NAME="nnn.uw.to"
+if [[ "$cert_choice" =~ ^[yY]$ ]]; then
+    while true; do
+        read -r -p "请输入自定义证书域名: " Certificate_name < /dev/tty
+        if [ -n "$Certificate_name" ]; then
             break
-            ;;
-        n)  
-            while true; do
-                read -r -p "请输入自定义证书域名: " Certificate_name < /dev/tty
-                if [ -n "$Certificate_name" ]; then
-                    break
-                else
-                    echo "域名不能为空"
-                fi
-            done
-            CERT_NAME=$Certificate_name
-            echo "请将证书放入："
-            echo "/etc/mihomo/cert/$Certificate_name.crt"
-            echo "/etc/mihomo/cert/$Certificate_name.key"
-            break
-            ;;
-        *)
-            echo "错误：请输入 y 或 n"
-            ;;
-    esac
-done
-
+        else
+            echo "域名不能为空"
+        fi
+    done
+    CERT_NAME=$Certificate_name
+    echo "请将证书放入："
+    echo "/etc/mihomo/cert/$Certificate_name.crt"
+    echo "/etc/mihomo/cert/$Certificate_name.key"
+else
+    Certificate_name="${current_time}.nnn.uw.to"
+    CERT_NAME="nnn.uw.to"
+fi
+stop_services
 # 依赖安装
 APT_PKGS="curl wget nano jq cron python3 openssl nginx libnginx-mod-stream"
 APK_PKGS="curl wget nano jq dcron python3 openssl nginx nginx-mod-stream"
@@ -150,45 +141,52 @@ else
     exit 1
 fi
 
-# 获取本机IP
-ipv4_regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
-ipv6_regex='^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}$'
-
-if [ "$ip_type_choice" == "1" ]; then
-    ip_address=$(curl -6 -sL --max-time 5 https://ip-api.wdqgn.eu.org | jq -r '.ip // empty')
-    if [[ -z "$ip_address" || ! "$ip_address" =~ $ipv6_regex ]]; then
-        echo "提示：未能自动获取到有效的 IPv6 地址。"
-        until [[ "$ip_address" =~ $ipv6_regex ]]; do
-            read -p "请输入服务器的 IPv6 地址: " ip_address < /dev/tty
-            if [[ ! "$ip_address" =~ $ipv6_regex ]]; then
-                echo "格式错误，请检查后再输入。"
-            fi
-        done
-    fi
-
-elif [ "$ip_type_choice" == "2" ]; then
-    ip_address=$(curl -4 -sL --max-time 5 https://ip-api.wdqgn.eu.org | jq -r '.ip // empty')
-    if [[ -z "$ip_address" || ! "$ip_address" =~ $ipv4_regex ]]; then
-        echo "提示：未能自动获取到有效的 IPv4 地址。"
-        until [[ "$ip_address" =~ $ipv4_regex ]]; do
-            read -p "请输入服务器的 IPv4 地址: " ip_address < /dev/tty
-            if [[ ! "$ip_address" =~ $ipv4_regex ]]; then
-                echo "格式错误，请检查后再输入。"
-            fi
-        done
-    fi
+if [[ "$ip_type_choice" =~ ^[yY]$ ]]; then
+    ip_type_choice=6
+    ip_regex='^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$'  # 简单IPv6
+else
+    ip_type_choice=4
+    ip_regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
 fi
+while true; do
+    ip_address=$(curl -${ip_type_choice} -s --max-time 5 https://cloudflare.com/cdn-cgi/trace | grep '^ip=' | cut -d= -f2)
+    if [[ ! "$ip_address" =~ $ip_regex ]]; then
+        echo "获取到的IP不合法：$ip_address"
+        read -p " y 重试, e 手动输入,其他退出: " retry < /dev/tty
+        if [[ "$retry" =~ ^[yY]$ ]]; then
+            continue
+        elif [[ "$retry" =~ ^[eE]$ ]]; then
+            read -p "输入IP地址: " ip_address < /dev/tty
+        else
+            exit 1
+        fi
+    fi
+    echo "检测到的IP地址：$ip_address"
+    geo_json=$(curl -s --max-time 5 "https://ipapi.co/${ip_address}/json" || echo "{}")
+    countryCode=$(echo "$geo_json" | jq -r '.country_code // empty')
+    cityinfo=$(echo "$geo_json" | jq -r '.city // "Unknown"')
+    flag=$(python3 -c "print(''.join(chr(127397 + ord(c)) for c in '$countryCode'))" 2>/dev/null || echo "🌐")
+    echo "检测到的地理位置：$flag $cityinfo"
+    proxy_name="${flag}${cityinfo} CF"
+    HY_proxy_name=${proxy_name/CF/HY}
+    RE_proxy_name=${proxy_name/CF/RE}
+    AN_proxy_name=${proxy_name/CF/AN}
+    TU_proxy_name=${proxy_name/CF/TU}
+    MR_proxy_name=${proxy_name/CF/MR}
+    TT_proxy_name=${proxy_name/CF/TT}
+    break
+done
 
 if [[ "$select_port" == "443" ]]; then
     CDN_CHICE=true
-    ECH_OPTS="ech-opts: {enable: true},"
+    ECH_OPTS="ech-opts: {enable: true}"
     VLESS_SERVER="cf.wdqgn.eu.org"
 else
     CDN_CHICE=false
     VLESS_SERVER=$ip_address
 fi
 
-if [ "$cert_choice" = "y" ]; then
+if [[ "$cert_choice" != "y" && "$cert_choice" != "Y" ]]; then
     echo "使用默认证书..."
     while true; do
         echo "正在尝试创建 DNS 记录..."
@@ -259,16 +257,12 @@ key_ech=$(echo "$output_ech" \
   | sed 's/^Key: //' \
   | sed 's/^/    /')
 
-# 生成节点名
-name_response=$(curl -s --max-time 5 http://ip-api.com/json/ || echo "{}")
-countryCode=$(echo "$name_response" | jq -r '.countryCode // empty')
-cityinfo=$(echo "$name_response" | jq -r '.city // "Unknown"')
-flag=$(python3 -c "print(''.join(chr(127397 + ord(c)) for c in '$countryCode'))" 2>/dev/null || echo "🌐")
-
-proxy_name="${flag}${cityinfo} CF"
-HY_proxy_name=${proxy_name/CF/HY}
-RE_proxy_name=${proxy_name/CF/RE}
-AN_proxy_name=${proxy_name/CF/AN}
+output_ech_1=$(mihomo generate ech-keypair cloudflare.com)
+config_ech_1=$(echo "$output_ech_1" | awk '/Config:/ {print $2}')
+key_ech_1=$(echo "$output_ech_1" \
+  | awk '/-----BEGIN ECH KEYS-----/,/-----END ECH KEYS-----/' \
+  | sed 's/^Key: //' \
+  | sed 's/^/    /')
 
 mkdir -p /etc/mihomo
 CONFIG_FILE="/etc/mihomo/config.yaml"
@@ -279,6 +273,30 @@ secret: "$uuid"
 external-ui-url: "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip"
 ipv6: true
 listeners:
+- name: mieru-in
+  type: mieru
+  port: $TU_SELECT_PORT
+  listen: 0.0.0.0
+  transport: TCP
+  users:
+    $uuid: $uuid
+  user-hint-is-mandatory: true
+- name: tuicv5-in
+  type: tuic
+  port: $TU_SELECT_PORT
+  listen: 0.0.0.0
+  users:
+    $uuid: $uuid
+  certificate: /etc/mihomo/cert/$CERT_NAME.crt
+  private-key: /etc/mihomo/cert/$CERT_NAME.key
+  ech-key: |
+$key_ech
+  congestion-controller: bbr
+  max-idle-time: 15000
+  authentication-timeout: 1000
+  alpn:
+    - h3
+  max-udp-relay-packet-size: 1500
 - name: vless-ws-in
   type: vless
   listen: 127.0.0.1
@@ -308,12 +326,25 @@ $key_ech
     username: 1
     flow: xtls-rprx-vision
   reality-config:
-    dest: www.cloudflare.com:443
+    dest: speed.cloudflare.com:443
     private-key: $private_key_reality
     short-id:
       - $shortId
     server-names:
-      - www.cloudflare.com
+      - speed.cloudflare.com
+- name: trusttunnel-in
+  type: trusttunnel
+  port: 57999
+  listen: 127.0.0.1
+  users:
+    - username: $uuid
+      password: $uuid
+  certificate: /etc/mihomo/cert/$CERT_NAME.crt 
+  private-key: /etc/mihomo/cert/$CERT_NAME.key 
+  ech-key: |
+$key_ech_1
+  network: [tcp]
+  congestion-controller: bbr
 - name: hy2-in
   type: hysteria2
   port: $select_port
@@ -347,9 +378,10 @@ APPEND_CONTENT="
 # access_log /dev/stdout only_sni;
 stream {
     map \$ssl_preread_server_name \$backend {
-        www.cloudflare.com       reality; 
-        default                     www;
-        cloudflare-ech.com   anytls;
+        cloudflare-ech.com             anytls;
+        speed.cloudflare.com       reality; 
+        cloudflare.com          trusttunnel;
+        default            website;
     }
     upstream anytls {
         server 127.0.0.1:55999;
@@ -357,8 +389,11 @@ stream {
     upstream reality {
         server 127.0.0.1:56999;
     }
-    upstream www {
-        server 127.0.0.1:2083;
+	upstream trusttunnel {
+        server 127.0.0.1:57999;
+    }
+    upstream website {
+        server 127.0.0.1:9999;
     }
     server {
         listen $select_port      reuseport;
@@ -380,8 +415,8 @@ mkdir -p /etc/nginx/conf.d
 
 cat > /etc/nginx/conf.d/subscription.conf <<EOF
 server {
-    listen 2083 ssl;
-    listen [::]:2083 ssl;
+    listen 9999 ssl;
+    listen [::]:9999 ssl;
 
     ssl_certificate /etc/mihomo/cert/$CERT_NAME.crt;
     ssl_certificate_key /etc/mihomo/cert/$CERT_NAME.key;
@@ -394,7 +429,7 @@ server {
     ssl_stapling_verify on;
 
     location /$uuid/ {
-        alias /opt/www/;
+        alias /opt/www/sub/;
         try_files \$uri =404;
         default_type application/octet-stream;
     }
@@ -420,10 +455,15 @@ EOF
 # 创建warp出站
 if [[ "$warp_choice" =~ ^[yY]$ ]]; then
     MASQUE_API_URL="https://warp-register.wdqgn.eu.org/reg?type=masque&format=mihomo"
-    for i in 1 2; do
-        masque_response=$(curl -s --fail --max-time 10 "$MASQUE_API_URL") && \
-        echo "$masque_response" | grep -q 'private-key:' && {
-            echo "WARP 注册成功"
+
+    max_retry=6
+    base_sleep=2
+    masque_response=""
+    for i in $(seq 1 $max_retry); do
+        masque_response=$(curl -s --fail --max-time 10 "$MASQUE_API_URL")
+
+        if echo "$masque_response" | grep -q "private-key:"; then
+            echo "WARP 创建成功"
             cat >> "$CONFIG_FILE" <<EOF
 
 proxies:
@@ -432,30 +472,132 @@ EOF
             sed -Ei 's/^([[:space:]]*)#(- warp-masque)$/\1\2/' "$CONFIG_FILE"
             echo "已更新 $CONFIG_FILE，已启用 warp-masque出站"
             break
-        }
+        fi
+        echo "尝试 $i/$max_retry 失败"
+        sleep_time=$((base_sleep * i))
+        echo "等待 ${sleep_time}s 后重试"
+        sleep "$sleep_time"
 
-        echo "尝试 $i 失败"
-        sleep 2
     done
-    if ! echo "$masque_response" | grep -q 'private-key:'; then
-        echo "WARP 注册失败，已跳过"
+
+    if ! echo "$masque_response" | grep -q "private-key:"; then
+        echo "WARP 创建失败，已跳过"
     fi
 fi
 
 # 创建客户端配置文件
-mkdir -p /opt/www
-cat > /opt/www/${current_time}.yaml <<EOF
+mkdir -p /opt/www/sub
+cat > /opt/www/sub/${current_time}.yaml <<EOF
 proxies:
-- {name: "${HY_proxy_name} |${current_time}", type: hysteria2, server: $ip_address, port: $select_port, password: $uuid, tls: true, ech-opts: {enable: true, config: $config_ech}, sni: $Certificate_name, alpn: [h3]}
-- {name: "${RE_proxy_name} |${current_time}", type: vless, server: $ip_address, port: $select_port, uuid: $uuid, network: tcp, tls: true, flow: xtls-rprx-vision, servername: www.cloudflare.com, reality-opts: {public-key: $public_key_reality, short-id: $shortId}, client-fingerprint: chrome}
-- {name: "${AN_proxy_name} |${current_time}", type: anytls, server: $ip_address, port: $select_port, password: $uuid, tls: true, ech-opts: {enable: true, config: $config_ech}, client-fingerprint: chrome, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: $Certificate_name, alpn: [h2, http/1.1]}
-- {name: "${proxy_name} |${current_time}", type: vless, server: $VLESS_SERVER, port: $select_port, uuid: $uuid, network: ws, tls: true, $ECH_OPTS flow: xtls-rprx-vision, alpn: ["h2","http/1.1"], ws-opts: {path: /$uuid-vl, headers: {host: $Certificate_name}}, encryption: $client_encryption}
+- name: "${HY_proxy_name}|${current_time}"
+  type: hysteria2
+  server: $ip_address
+  port: $select_port
+  password: $uuid
+  up: "30 Mbps"
+  down: "300 Mbps"
+  tls: true
+  ech-opts: {enable: true, config: $config_ech}
+  sni: $Certificate_name
+  alpn: [h3]
+- name: "${RE_proxy_name}|${current_time}"
+  type: vless
+  server: $ip_address
+  port: $select_port
+  uuid: $uuid
+  network: tcp
+  tls: true
+  flow: xtls-rprx-vision
+  servername: speed.cloudflare.com
+  reality-opts: {public-key: $public_key_reality, short-id: $shortId}
+- name: "${AN_proxy_name}|${current_time}"
+  type: anytls
+  server: $ip_address
+  port: $select_port
+  password: $uuid
+  tls: true
+  ech-opts: {enable: true, config: $config_ech}
+  idle-session-check-interval: 30
+  idle-session-timeout: 30
+  min-idle-session: 0
+  sni: $Certificate_name
+  alpn: [h2, http/1.1]
+- name: "${proxy_name}|${current_time}"
+  type: vless
+  server: $VLESS_SERVER
+  port: $select_port
+  uuid: $uuid
+  network: ws
+  tls: true
+  $ECH_OPTS 
+  flow: xtls-rprx-vision
+  alpn: [h2]
+  ws-opts: {path: /$uuid-vl, headers: {host: $Certificate_name}}
+  encryption: $client_encryption
+- name: ${MR_proxy_name}|${current_time}
+  type: mieru
+  server: $ip_address
+  port: $TU_SELECT_PORT
+  transport: TCP
+  username: $uuid
+  password: $uuid
+  multiplexing: MULTIPLEXING_LOW
+- name: ${TU_proxy_name}|${current_time}
+  server: $ip_address
+  port: $TU_SELECT_PORT
+  type: tuic
+  uuid: $uuid
+  password: $uuid
+  alpn: [h3]
+  reduce-rtt: true
+  request-timeout: 8000
+  udp-relay-mode: native
+  congestion-controller: bbr
+  max-udp-relay-packet-size: 1500
+  fast-open: true
+  max-open-streams: 20
+  tls: true
+  sni: $Certificate_name
+  ech-opts: {enable: true, config: $config_ech}
+- name: ${TT_proxy_name}|${current_time}
+  type: trusttunnel
+  server: $ip_address
+  port: $select_port
+  username: $uuid
+  password: $uuid
+  health-check: true
+  ech-opts: {enable: true, config: $config_ech_1}
+  sni: $Certificate_name
+  alpn: [h2]
+  congestion-controller: bbr
 EOF
 
-wget -O /opt/www/config.yaml https://link.wdqgn.eu.org/nopasswd/config.yaml
+wget -O /opt/www/sub/config.yaml https://link.wdqgn.eu.org/nopasswd/config.yaml
 subscription_address=https://${Certificate_name}:${select_port}/$uuid/${current_time}.yaml
-sed -i "s#my-subscription-address#$(printf '%s' "$subscription_address" | sed 's/[\/&]/\\&/g')#g" /opt/www/config.yaml
-sed -i "s#password-config#$uuid#g" /opt/www/config.yaml
+sed -i "s#my-subscription-address#$(printf '%s' "$subscription_address" | sed 's/[\/&]/\\&/g')#g" /opt/www/sub/config.yaml
+sed -i "s#password-config#$uuid#g" /opt/www/sub/config.yaml
+
+cat > /opt/www/sub/README.txt <<EOF
+------------------------------
+生成的clash配置位于 /opt/www/sub/
+clash订阅链接地址为,可直接使用 https://$Certificate_name:$select_port/$uuid/config.yaml
+proxy-providers: 配置
+${current_time}: {type: http, url: ${subscription_address}, health-check: {enable: true, url: https://cp.cloudflare.com}}
+
+访问控制zashboard面板,地址为 https://$Certificate_name:$select_port/${current_time}/ui/#/
+面板配置,协议 https 主机 $Certificate_name 端口 $select_port 二级路径 /${current_time} 密码 $uuid
+可在面板中更改出站节点为直连或warp,查看使用状态和流量
+如果需要删除脚本创建的内容,使用 -uninstall 参数,不会删除包管理器安装的内容
+添加其他站点, default  9999
+使用非443端口时,生成的vless-ws配置未走CDN,未开启ech,可能导致sni泄露,建议减少使用 $proxy_name 此节点或直接删除.
+如使用自定义证书,请将证书放入：
+/etc/mihomo/cert/$Certificate_name.crt
+/etc/mihomo/cert/$Certificate_name.key
+然后重启mihomo和nginx
+如遇意外错误可加入tg群反馈 https://t.me/dmjlqa
+------------------------------
+EOF
+
 if command -v systemctl &>/dev/null; then
     systemctl daemon-reload
     systemctl enable --now mihomo
@@ -468,20 +610,9 @@ else
     rc-service nginx restart
     rc-service dcron restart
 fi
-cat /opt/www/${current_time}.yaml
-echo "生成的clash配置位于 /opt/www/"
-echo "clash订阅链接地址为,可直接使用 https://$Certificate_name:$select_port/$uuid/config.yaml"
-echo "纯节点链接,可加入其他配置的proxy-providers块 $subscription_address   "
-echo "访问控制zashboard面板,地址为 https://$Certificate_name:$select_port/${current_time}/ui/#/"
-echo "面板配置,协议 https 主机 $Certificate_name 端口 $select_port 二级路径 /${current_time} 密码 $uuid"
-echo "可在面板中更改出站节点为直连或warp,查看使用状态和流量"
-echo "如果需要删除脚本创建的内容,请使用 -uninstall 参数,不会删除包管理器安装的内容"
-echo "其他网站可工作在2083,nginx默认转发所有非代理流量到2083"
+
+cat /opt/www/sub/${current_time}.yaml
+cat /opt/www/sub/README.txt
 if [[ "$select_port" == "443" ]]; then
-    echo "非移动用户自行更换其他优选域名,cf.wdqgn.eu.org只测了移动"
+echo "非移动用户自行更换其他优选域名,cf.wdqgn.eu.org只测了移动"
 fi
-echo "如使用自定义证书,请将证书放入："
-echo "/etc/mihomo/cert/$Certificate_name.crt"
-echo "/etc/mihomo/cert/$Certificate_name.key"
-echo "然后重启mihomo, systemctl restart mihomo 或 rc-service mihomo restart"
-echo "如遇意外错误可加入tg群反馈 https://t.me/dmjlqa"
