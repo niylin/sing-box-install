@@ -18,9 +18,11 @@ uninstall_all() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl stop mihomo 2>/dev/null || true
         systemctl disable mihomo 2>/dev/null || true
+        systemctl stop nginx 2>/dev/null || true
     fi
     if command -v rc-service >/dev/null 2>&1; then
         rc-service mihomo stop 2>/dev/null || true
+        rc-service nginx stop 2>/dev/null || true
     fi
     if command -v rc-update >/dev/null 2>&1; then
         rc-update del mihomo default 2>/dev/null || true
@@ -59,6 +61,36 @@ stop_services() {
     fi
 }
 
+generate_vless_config() {
+cat <<EOF
+- name: "${proxy_name}|${current_time}"
+  type: vless
+  server: cf.wdqgn.eu.org
+  port: 443
+  uuid: $uuid
+  network: ws
+  tls: true
+  ech-opts: {enable: true}
+  flow: xtls-rprx-vision
+  alpn: [h2]
+  ws-opts: {path: /$uuid-vl, headers: {host: $Certificate_name}}
+  encryption: $client_encryption
+EOF
+}
+generate_vless_server_config() {
+cat <<EOF
+- name: vless-ws-in
+  type: vless
+  listen: 127.0.0.1
+  port: 54999
+  users:
+    - username: 1
+      uuid: $uuid
+      flow: xtls-rprx-vision
+  decryption: $server_decryption
+  ws-path: /$uuid-vl
+EOF
+}
 if [ "${1:-}" = "-uninstall" ]; then
     uninstall_all
 fi
@@ -177,13 +209,45 @@ while true; do
     break
 done
 
-if [[ "$select_port" == "443" ]]; then
-    CDN_CHICE=true
-    ECH_OPTS="ech-opts: {enable: true}"
-    VLESS_SERVER="cf.wdqgn.eu.org"
+# mihomo安装和配置
+if ! command -v mihomo &>/dev/null; then
+    echo "未检测到 mihomo，正在开始安装..."
+    curl -fsSL https://link.wdqgn.eu.org/nopasswd/pkg/mihomo-pkg.sh | bash
 else
-    CDN_CHICE=false
-    VLESS_SERVER=$ip_address
+    echo "[+] 已检测到 mihomo，跳过安装。"
+fi
+
+# 生成密钥
+output_x25519=$(mihomo generate vless-x25519)
+server_decryption=$(echo "$output_x25519" | awk -F'"' '/\[Server\]/ {print $2}')
+client_encryption=$(echo "$output_x25519" | awk -F'"' '/\[Client\]/ {print $2}')
+
+shortId=$(openssl rand -hex 8)
+output_reality=$(mihomo generate reality-keypair)
+private_key_reality=$(echo "$output_reality" | awk '/PrivateKey:/ {print $2}')
+public_key_reality=$(echo "$output_reality" | awk '/PublicKey:/ {print $2}')
+uuid=$(cat /proc/sys/kernel/random/uuid)
+
+output_ech=$(mihomo generate ech-keypair cloudflare-ech.com)
+config_ech=$(echo "$output_ech" | awk '/Config:/ {print $2}')
+key_ech=$(echo "$output_ech" \
+  | awk '/-----BEGIN ECH KEYS-----/,/-----END ECH KEYS-----/' \
+  | sed 's/^Key: //' \
+  | sed 's/^/    /')
+
+output_ech_1=$(mihomo generate ech-keypair cloudflare.com)
+config_ech_1=$(echo "$output_ech_1" | awk '/Config:/ {print $2}')
+key_ech_1=$(echo "$output_ech_1" \
+  | awk '/-----BEGIN ECH KEYS-----/,/-----END ECH KEYS-----/' \
+  | sed 's/^Key: //' \
+  | sed 's/^/    /')
+
+if [[ "$select_port" == "443" ]]; then
+CDN_CHICE=true
+VLESS_WS_CONFIG=$(generate_vless_config)
+VLESS_WS_SERVER_CONFIG=$(generate_vless_server_config)
+else
+CDN_CHICE=false
 fi
 
 if [[ "$cert_choice" != "y" && "$cert_choice" != "Y" ]]; then
@@ -231,38 +295,6 @@ if [[ "$cert_choice" != "y" && "$cert_choice" != "Y" ]]; then
 fi
 
 
-# mihomo安装和配置
-if ! command -v mihomo &>/dev/null; then
-    echo "未检测到 mihomo，正在开始安装..."
-    curl -fsSL https://link.wdqgn.eu.org/nopasswd/pkg/mihomo-pkg.sh | bash
-else
-    echo "[+] 已检测到 mihomo，跳过安装。"
-fi
-
-# 生成密钥
-output_x25519=$(mihomo generate vless-x25519)
-server_decryption=$(echo "$output_x25519" | awk -F'"' '/\[Server\]/ {print $2}')
-client_encryption=$(echo "$output_x25519" | awk -F'"' '/\[Client\]/ {print $2}')
-
-shortId=$(openssl rand -hex 8)
-output_reality=$(mihomo generate reality-keypair)
-private_key_reality=$(echo "$output_reality" | awk '/PrivateKey:/ {print $2}')
-public_key_reality=$(echo "$output_reality" | awk '/PublicKey:/ {print $2}')
-uuid=$(cat /proc/sys/kernel/random/uuid)
-
-output_ech=$(mihomo generate ech-keypair cloudflare-ech.com)
-config_ech=$(echo "$output_ech" | awk '/Config:/ {print $2}')
-key_ech=$(echo "$output_ech" \
-  | awk '/-----BEGIN ECH KEYS-----/,/-----END ECH KEYS-----/' \
-  | sed 's/^Key: //' \
-  | sed 's/^/    /')
-
-output_ech_1=$(mihomo generate ech-keypair cloudflare.com)
-config_ech_1=$(echo "$output_ech_1" | awk '/Config:/ {print $2}')
-key_ech_1=$(echo "$output_ech_1" \
-  | awk '/-----BEGIN ECH KEYS-----/,/-----END ECH KEYS-----/' \
-  | sed 's/^Key: //' \
-  | sed 's/^/    /')
 
 mkdir -p /etc/mihomo
 CONFIG_FILE="/etc/mihomo/config.yaml"
@@ -297,16 +329,7 @@ $key_ech
   alpn:
     - h3
   max-udp-relay-packet-size: 1500
-- name: vless-ws-in
-  type: vless
-  listen: 127.0.0.1
-  port: 54999
-  users:
-    - username: 1
-      uuid: $uuid
-      flow: xtls-rprx-vision
-  decryption: $server_decryption
-  ws-path: /$uuid-vl
+$VLESS_WS_SERVER_CONFIG
 - name: anytls-in
   type: anytls
   port: 55999
@@ -522,18 +545,7 @@ proxies:
   min-idle-session: 0
   sni: $Certificate_name
   alpn: [h2, http/1.1]
-- name: "${proxy_name}|${current_time}"
-  type: vless
-  server: $VLESS_SERVER
-  port: $select_port
-  uuid: $uuid
-  network: ws
-  tls: true
-  $ECH_OPTS 
-  flow: xtls-rprx-vision
-  alpn: [h2]
-  ws-opts: {path: /$uuid-vl, headers: {host: $Certificate_name}}
-  encryption: $client_encryption
+$VLESS_WS_CONFIG
 - name: ${MR_proxy_name}|${current_time}
   type: mieru
   server: $ip_address
@@ -580,16 +592,17 @@ sed -i "s#password-config#$uuid#g" /opt/www/sub/config.yaml
 cat > /opt/www/sub/README.txt <<EOF
 ------------------------------
 生成的clash配置位于 /opt/www/sub/
+订阅链接仅支持使用最新mihomo内核的客户端,比如ClashX.Meta和Clash.Meta for Android,其他客户端报错,需根据报错信息删除不支持的节点
+定期清理解析记录,清理后订阅链接和CF节点${proxy_name}|${current_time}失效,其他节点不受影响
 clash订阅链接地址为,可直接使用 https://$Certificate_name:$select_port/$uuid/config.yaml
 proxy-providers: 配置
 ${current_time}: {type: http, url: ${subscription_address}, health-check: {enable: true, url: https://cp.cloudflare.com}}
 
-访问控制zashboard面板,地址为 https://$Certificate_name:$select_port/${current_time}/ui/#/
-面板配置,协议 https 主机 $Certificate_name 端口 $select_port 二级路径 /${current_time} 密码 $uuid
+服务端zashboard面板,地址为 
+https://$Certificate_name:$select_port/${current_time}/ui/#/setup?hostname=$Certificate_name&port=$select_port&secondaryPath=/${current_time}&secret=$uuid
 可在面板中更改出站节点为直连或warp,查看使用状态和流量
 如果需要删除脚本创建的内容,使用 -uninstall 参数,不会删除包管理器安装的内容
 添加其他站点, default  9999
-使用非443端口时,生成的vless-ws配置未走CDN,未开启ech,可能导致sni泄露,建议减少使用 $proxy_name 此节点或直接删除.
 如使用自定义证书,请将证书放入：
 /etc/mihomo/cert/$Certificate_name.crt
 /etc/mihomo/cert/$Certificate_name.key
