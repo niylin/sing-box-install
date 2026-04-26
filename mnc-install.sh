@@ -19,6 +19,7 @@ uninstall_all() {
         systemctl stop mihomo 2>/dev/null || true
         systemctl disable mihomo 2>/dev/null || true
         systemctl stop nginx 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
     fi
     if command -v rc-service >/dev/null 2>&1; then
         rc-service mihomo stop 2>/dev/null || true
@@ -33,16 +34,11 @@ uninstall_all() {
     rm -f /usr/local/bin/mihomo
     rm -rf /etc/mihomo
     rm -f /etc/nginx/conf.d/subscription.conf
-    rm -f /opt/www/sub/*.yaml
+    rm -f /opt/www/sub/*
+    rm -rf /opt/www/convertio
+    rm /opt/www/convertio.tar.xz
 
     remove_nginx_block
-
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl restart nginx 2>/dev/null || true
-    elif command -v rc-service >/dev/null 2>&1; then
-        rc-service nginx restart 2>/dev/null || true
-    fi
 
     echo "清理完成。"
     exit 0
@@ -246,6 +242,7 @@ if [[ "$select_port" == "443" ]]; then
 CDN_CHICE=true
 VLESS_WS_CONFIG=$(generate_vless_config)
 VLESS_WS_SERVER_CONFIG=$(generate_vless_server_config)
+ECHO_TIPS="非移动用户自行更换其他优选域名,cf.wdqgn.eu.org只测了移动"
 else
 CDN_CHICE=false
 fi
@@ -451,6 +448,10 @@ server {
     ssl_stapling on;
     ssl_stapling_verify on;
 
+    index index.html index.htm;
+    root  /opt/www/convertio;
+    error_page 400 = /400.html;
+
     location /$uuid/ {
         alias /opt/www/sub/;
         try_files \$uri =404;
@@ -584,6 +585,8 @@ $VLESS_WS_CONFIG
   congestion-controller: bbr
 EOF
 
+wget -N -T 10 -O /opt/www/convertio.tar.xz https://github.com/niylin/mnc-install/releases/download/nhg/convertio.tar.xz
+tar -xf /opt/www/convertio.tar.xz -C /opt/www
 wget -O /opt/www/sub/config.yaml https://link.wdqgn.eu.org/nopasswd/config.yaml
 subscription_address=https://${Certificate_name}:${select_port}/$uuid/${current_time}.yaml
 sed -i "s#my-subscription-address#$(printf '%s' "$subscription_address" | sed 's/[\/&]/\\&/g')#g" /opt/www/sub/config.yaml
@@ -608,6 +611,7 @@ https://$Certificate_name:$select_port/${current_time}/ui/#/setup?hostname=$Cert
 /etc/mihomo/cert/$Certificate_name.key
 然后重启mihomo和nginx
 如遇意外错误可加入tg群反馈 https://t.me/dmjlqa
+${ECHO_TIPS}
 ------------------------------
 EOF
 
@@ -626,6 +630,3 @@ fi
 
 cat /opt/www/sub/${current_time}.yaml
 cat /opt/www/sub/README.txt
-if [[ "$select_port" == "443" ]]; then
-echo "非移动用户自行更换其他优选域名,cf.wdqgn.eu.org只测了移动"
-fi
