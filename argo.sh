@@ -3,10 +3,14 @@
 set -o pipefail
 
 LISTEN_HOST="127.0.0.1"
-LISTEN_PORT="54999"
+LISTEN_PORT="58991"
 PROXY_NAME="argo-vless"
 CONFIG_FILE="/etc/sing-box/config.json"
 ARGO_CONFIG="$HOME/argo.yaml"
+uuid=""
+domain_name=""
+cloudflared_pid=""
+tmp_log=""
 
 show_help() {
 cat <<EOF
@@ -44,7 +48,8 @@ start_tunnel() {
     pkill -f "cloudflared tunnel --url http://${LISTEN_HOST}:${LISTEN_PORT}" 2>/dev/null
     sleep 1
 
-    tmp_log=$(mktemp)
+    local tmp_log
+    tmp_log="$(mktemp)"
     cloudflared tunnel --url "http://${LISTEN_HOST}:${LISTEN_PORT}" >> "$tmp_log" 2>&1 &
     cloudflared_pid=$!
 
@@ -120,28 +125,67 @@ restart_tunnel() {
 
 install_cloudflared() {
     echo "正在安装 cloudflared..."
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        x86_64) BINARY_ARCH="amd64" ;;
-        aarch64|arm64) BINARY_ARCH="arm64" ;;
-        armv7l) BINARY_ARCH="armhf" ;;
-        *) echo "暂不支持的架构: $ARCH"; exit 1 ;;
+    if ! command -v install >/dev/null 2>&1; then
+        echo "错误：未找到依赖 'install'(coreutils)，请先安装。"
+        exit 1
+    fi
+    local arch binary_arch
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64) binary_arch="amd64" ;;
+        aarch64|arm64) binary_arch="arm64" ;;
+        armv7l) binary_arch="armhf" ;;
+        *) echo "暂不支持的架构: $arch"; exit 1 ;;
     esac
 
-    echo "检测到系统架构: $ARCH -> 匹配二进制: $BINARY_ARCH"
+    echo "检测到系统架构: $arch -> 匹配二进制: $binary_arch"
     echo "正在获取最新版本信息..."
-    LATEST_TAG=$(curl -fsSL https://api.github.com/repos/cloudflare/cloudflared/releases/latest | sed -nE 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/p' | head -n 1)
+    local latest_tag
+    latest_tag="$(curl -fsSL https://api.github.com/repos/cloudflare/cloudflared/releases/latest \
+        | sed -nE 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/p' \
+        | head -n 1)" || {
+        echo "错误：无法连接到 GitHub API，无法获取最新版本。"
+        exit 1
+    }
 
-    if [ -z "$LATEST_TAG" ]; then
-        echo "无法获取最新版本，请检查网络连接。"
+    if [ -z "$latest_tag" ]; then
+        echo "错误：GitHub API 响应中版本号为空。"
         exit 1
     fi
 
-    URL="https://github.com/cloudflare/cloudflared/releases/download/${LATEST_TAG}/cloudflared-linux-${BINARY_ARCH}"
-    echo "最新版本: $LATEST_TAG"
-    echo "正在下载: $URL"
-    curl -fL --progress-bar -o /usr/local/bin/cloudflared "$URL"
-    chmod +x /usr/local/bin/cloudflared
+    local url="https://github.com/cloudflare/cloudflared/releases/download/${latest_tag}/cloudflared-linux-${binary_arch}"
+    local mirrors=(
+        "https://mirror.ghproxy.com/"
+        "https://ghproxy.net/"
+        "https://github.moeyy.xyz/"
+    )
+    local tmpfile
+    tmpfile="$(mktemp)"
+
+    echo "最新版本: $latest_tag"
+    echo "正在下载: cloudflared-linux-${binary_arch}"
+
+    if curl -fSL "$url" -o "$tmpfile"; then
+        :
+    else
+        echo "直链下载失败，尝试镜像代理 ..."
+        local ok=false
+        for mirror in "${mirrors[@]}"; do
+            echo "尝试镜像: ${mirror}"
+            if curl -fSL "${mirror}${url}" -o "$tmpfile"; then
+                ok=true
+                break
+            fi
+        done
+        if ! "$ok"; then
+            echo "错误：所有下载源均失败。"
+            rm -f "$tmpfile"
+            exit 1
+        fi
+    fi
+
+    install -m 0755 "$tmpfile" /usr/local/bin/cloudflared
+    rm -f "$tmpfile"
     cloudflared --version
     echo "cloudflared 安装完成！"
 }
@@ -163,24 +207,124 @@ install_sing_box() {
     fi
 
     echo "未检测到 sing-box，正在开始安装..."
-    curl -fsSL https://sing-box.app/install.sh | sh
-    if command -v sing-box >/dev/null 2>&1; then
+
+    local os_info
+    os_info="$(grep -E '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '"')"
+    [ -z "$os_info" ] && os_info="$(cat /etc/alpine-release 2>/dev/null | sed 's/^/Alpine Linux /')"
+    [ -z "$os_info" ] && os_info="未知"
+
+    local os="" arch="" pkg_suffix="" pkg_install=""
+    if command -v pacman >/dev/null 2>&1; then
+        os="linux"
+        arch=$(uname -m)
+        pkg_suffix=".pkg.tar.zst"
+        pkg_install="pacman -U --noconfirm"
+    elif command -v dpkg >/dev/null 2>&1; then
+        os="linux"
+        arch=$(dpkg --print-architecture)
+        pkg_suffix=".deb"
+        pkg_install="dpkg -i"
+    elif command -v dnf >/dev/null 2>&1; then
+        os="linux"
+        arch=$(uname -m)
+        pkg_suffix=".rpm"
+        pkg_install="dnf install -y"
+    elif command -v rpm >/dev/null 2>&1; then
+        os="linux"
+        arch=$(uname -m)
+        pkg_suffix=".rpm"
+        pkg_install="rpm -i"
+    elif command -v apk >/dev/null 2>&1; then
+        os="linux"
+        arch=$(apk --print-arch)
+        pkg_suffix=".apk"
+        pkg_install="apk add --allow-untrusted"
+    elif command -v opkg >/dev/null 2>&1; then
+        os="openwrt"
+        . /etc/os-release 2>/dev/null || true
+        arch="$OPENWRT_ARCH"
+        pkg_suffix=".ipk"
+        pkg_install="opkg update && opkg install"
+    else
+        echo "错误：未找到支持的包管理器（pacman/dpkg/dnf/rpm/apk/opkg）"
+        echo "当前系统: $os_info"
+        exit 1
+    fi
+    echo "检测到包管理器: ${pkg_install%% *}，架构: $arch"
+
+    echo "正在获取最新版本信息..."
+    local download_version
+    download_version="$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest \
+        | grep tag_name \
+        | head -n 1 \
+        | awk -F: '{print $2}' \
+        | sed 's/[", v]//g')" || {
+        echo "错误：无法连接到 GitHub API，无法获取最新版本。"
+        echo "当前系统: $os_info"
+        exit 1
+    }
+
+    if [ -z "$download_version" ]; then
+        echo "错误：GitHub API 响应中版本号为空。"
+        echo "当前系统: $os_info"
+        exit 1
+    fi
+    echo "最新版本: $download_version"
+
+    local pkg_name="sing-box_${download_version}_${os}_${arch}${pkg_suffix}"
+    local url="https://github.com/SagerNet/sing-box/releases/download/v${download_version}/${pkg_name}"
+    local mirrors=(
+        "https://mirror.ghproxy.com/"
+        "https://ghproxy.net/"
+        "https://github.moeyy.xyz/"
+    )
+
+    echo "正在下载: $pkg_name"
+    if curl -fSL "$url" -o "$pkg_name"; then
+        :
+    else
+        echo "直链下载失败，尝试镜像代理 ..."
+        local ok=false
+        for mirror in "${mirrors[@]}"; do
+            echo "尝试镜像: ${mirror}"
+            if curl -fSL "${mirror}${url}" -o "$pkg_name"; then
+                ok=true
+                break
+            fi
+        done
+        if ! "$ok"; then
+            echo "错误：所有下载源均失败。"
+            echo "当前系统: $os_info"
+            rm -f "$pkg_name"
+            exit 1
+        fi
+    fi
+
+    echo "安装包: $pkg_install $pkg_name"
+    if sh -c "$pkg_install \"$pkg_name\""; then
+        rm -f "$pkg_name"
         echo "sing-box 安装完成！"
         sing-box version
     else
-        echo "sing-box 安装失败，请检查安装脚本输出。"
+        echo ""
+        echo "========================================================"
+        echo "  sing-box 安装失败"
+        echo "  当前系统: $os_info"
+        echo "  可能原因: 系统过旧，有未满足的依赖"
+        echo "  建议: 升级系统后重试"
+        echo "========================================================"
+        rm -f "$pkg_name"
         exit 1
     fi
 }
-restart_sing_box() {
+start_sing_box() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl enable --now sing-box
-        systemctl restart sing-box
     elif command -v rc-update >/dev/null 2>&1 && command -v rc-service >/dev/null 2>&1; then
         rc-update add sing-box default
-        rc-service sing-box restart
+        rc-service sing-box start
     else
-        echo "错误：未找到 systemctl 或 OpenRC，无法重启 sing-box。"
+        echo "错误：未找到 systemctl 或 OpenRC，无法启用 sing-box。"
         exit 1
     fi
 }
@@ -247,11 +391,11 @@ main() {
 
     install_sing_box
     write_sing_box_config
-    restart_sing_box
+    start_sing_box
     ensure_cloudflared
     start_tunnel
     write_client_config
-
+    show_help
     echo "分配域名: $domain_name"
     echo "cloudflared 隧道已在后台运行，PID: $cloudflared_pid"
     cat "$ARGO_CONFIG"

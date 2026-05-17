@@ -22,6 +22,41 @@ if ! command -v curl >/dev/null 2>&1; then
     exit 1
 fi
 
+uninstall_sing_box() {
+    echo "正在停止 sing-box 服务 ..."
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop sing-box 2>/dev/null || true
+        systemctl disable sing-box 2>/dev/null || true
+    elif command -v rc-service >/dev/null 2>&1; then
+        rc-service sing-box stop 2>/dev/null || true
+        rc-update del sing-box 2>/dev/null || true
+    fi
+
+    echo "正在删除脚本创建的配置文件 ..."
+    rm -f "$SING_BOX_CONFIG"
+    rm -rf /etc/sing-box/cert
+    rm -f "$LINK_CONFIG"
+    rm -f "$V2RAY_LINK"
+
+    echo "正在删除证书更新定时任务 ..."
+    if command -v crontab >/dev/null 2>&1; then
+        crontab -l 2>/dev/null \
+            | grep -v "${CERT_BASE_URL}/${CERTIFICATE_NAME}" \
+            | crontab - 2>/dev/null || true
+    fi
+
+    echo "卸载完成！"
+    echo "sing-box 二进制文件未被删除，如需移除请手动执行："
+    echo "  $(command -v sing-box 2>/dev/null || echo 'apt/pacman/apk remove sing-box')"
+}
+
+case "${1:-}" in
+    uninstall|-uninstall|--uninstall)
+        uninstall_sing_box
+        exit 0
+        ;;
+esac
+
 port_in_use() {
     port="$1"
     if command -v ss >/dev/null 2>&1; then
@@ -161,7 +196,113 @@ install_sing_box() {
     fi
 
     echo "未检测到 sing-box，正在开始安装..."
-    curl -fsSL https://sing-box.app/install.sh | sh
+
+    local os_info
+    os_info="$(grep -E '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '"')"
+    [ -z "$os_info" ] && os_info="$(cat /etc/alpine-release 2>/dev/null | sed 's/^/Alpine Linux /')"
+    [ -z "$os_info" ] && os_info="未知"
+
+    local os="" arch="" pkg_suffix="" pkg_install=""
+    if command -v pacman >/dev/null 2>&1; then
+        os="linux"
+        arch=$(uname -m)
+        pkg_suffix=".pkg.tar.zst"
+        pkg_install="pacman -U --noconfirm"
+    elif command -v dpkg >/dev/null 2>&1; then
+        os="linux"
+        arch=$(dpkg --print-architecture)
+        pkg_suffix=".deb"
+        pkg_install="dpkg -i"
+    elif command -v dnf >/dev/null 2>&1; then
+        os="linux"
+        arch=$(uname -m)
+        pkg_suffix=".rpm"
+        pkg_install="dnf install -y"
+    elif command -v rpm >/dev/null 2>&1; then
+        os="linux"
+        arch=$(uname -m)
+        pkg_suffix=".rpm"
+        pkg_install="rpm -i"
+    elif command -v apk >/dev/null 2>&1; then
+        os="linux"
+        arch=$(apk --print-arch)
+        pkg_suffix=".apk"
+        pkg_install="apk add --allow-untrusted"
+    elif command -v opkg >/dev/null 2>&1; then
+        os="openwrt"
+        . /etc/os-release 2>/dev/null || true
+        arch="$OPENWRT_ARCH"
+        pkg_suffix=".ipk"
+        pkg_install="opkg update && opkg install"
+    else
+        echo "错误：未找到支持的包管理器（dpkg/pacman/dnf/rpm/apk/opkg）"
+        echo "当前系统: $os_info"
+        exit 1
+    fi
+    echo "检测到包管理器: ${pkg_install%% *}，架构: $arch"
+
+    echo "正在获取最新版本信息..."
+    local download_version
+    download_version="$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest \
+        | grep tag_name \
+        | head -n 1 \
+        | awk -F: '{print $2}' \
+        | sed 's/[", v]//g')" || {
+        echo "错误：无法连接到 GitHub API，无法获取最新版本。"
+        echo "当前系统: $os_info"
+        exit 1
+    }
+
+    if [ -z "$download_version" ]; then
+        echo "错误：GitHub API 响应中版本号为空。"
+        echo "当前系统: $os_info"
+        exit 1
+    fi
+    echo "最新版本: $download_version"
+
+    local pkg_name="sing-box_${download_version}_${os}_${arch}${pkg_suffix}"
+    local url="https://github.com/SagerNet/sing-box/releases/download/v${download_version}/${pkg_name}"
+    local mirrors=(
+        "https://mirror.ghproxy.com/"
+        "https://ghproxy.net/"
+        "https://github.moeyy.xyz/"
+    )
+
+    echo "正在下载: $pkg_name"
+    if ! curl -fSL "$url" -o "$pkg_name"; then
+        echo "直链下载失败，尝试镜像代理 ..."
+        local ok=false
+        for mirror in "${mirrors[@]}"; do
+            echo "尝试镜像: ${mirror}"
+            if curl -fSL "${mirror}${url}" -o "$pkg_name"; then
+                ok=true
+                break
+            fi
+        done
+        if ! "$ok"; then
+            echo "错误：所有下载源均失败。"
+            echo "当前系统: $os_info"
+            rm -f "$pkg_name"
+            exit 1
+        fi
+    fi
+
+    echo "安装包: $pkg_install $pkg_name"
+    if sh -c "$pkg_install \"$pkg_name\""; then
+        rm -f "$pkg_name"
+        echo "sing-box 安装完成！"
+        sing-box version
+    else
+        echo ""
+        echo "========================================================"
+        echo "  sing-box 安装失败"
+        echo "  当前系统: $os_info"
+        echo "  可能原因: 系统过旧，有未满足的依赖"
+        echo "  建议: 升级系统后重试"
+        echo "========================================================"
+        rm -f "$pkg_name"
+        exit 1
+    fi
 }
 
 download_certificates() {
@@ -411,3 +552,4 @@ restart_service
 cat "$LINK_CONFIG"
 cat "$V2RAY_LINK"
 echo "客户端分享链接已生成：$V2RAY_LINK"
+echo "自动获取到的$ip_address 如果入站IP与出站IP不同，修改配置中的 IP 替换为实际入站 IP 后使用"
