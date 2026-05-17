@@ -402,6 +402,8 @@ main() {
     echo "生成的配置位于 $ARGO_CONFIG"
     echo "临时隧道仅供测试使用，如需稳定连接，请使用个人账户创建隧道至 http://${LISTEN_HOST}:${LISTEN_PORT}"
     echo "隧道过期，运行 ./argo.sh -res 重新创建隧道"
+    echo "如遇意外错误可加入tg群反馈 https://t.me/dmjlqa"
+
 }
 
 main "$@"
